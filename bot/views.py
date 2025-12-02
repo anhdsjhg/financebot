@@ -4,9 +4,25 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from asgiref.sync import async_to_sync
 import json
 import random
+from telegram.error import BadRequest
 
 TOKEN = "8050416803:AAH-H_CWnRgJ2n5MoQYzshVIqU-jhrjeJus"
 bot = Bot(token=TOKEN)
+
+async def safe_answer_callback(callback_query_id, text=None, show_alert=False):
+    try:
+        if callback_query_id:
+            await bot.answer_callback_query(callback_query_id, text=text, show_alert=show_alert)
+    except BadRequest as e:
+        print("answer_callback_query failed:", e)
+
+def button_already_pressed(state, button_id):
+    """Возвращает True, если кнопка уже нажата"""
+    pressed = state.setdefault("pressed_buttons", set())
+    if button_id in pressed:
+        return True
+    pressed.add(button_id)
+    return False
 
 # Максимальное количество покупок за игру
 MAX_PURCHASES = 6
@@ -393,20 +409,30 @@ async def handle_myth(chat_id, data):
 
     await send_myth(chat_id)
 
-
 # Основная обработка коллбэков
 user_clicked_buttons = {}  
 
-async def handle_callback(chat_id, data):
+async def handle_callback(chat_id, data, callback_id=None):
     state = user_states.setdefault(chat_id, {})
     clicked = user_clicked_buttons.setdefault(chat_id, set())
 
+    # Защита от повторного нажатия
     if data in clicked:
-        await bot.answer_callback_query(callback_query_id=None, text="ℹ️ Бұл батырма бір рет басылды!", show_alert=True)
+        if callback_id:
+            await bot.answer_callback_query(
+                callback_query_id=callback_id, 
+                text="ℹ️ Бұл батырма бір рет басылды!", 
+                show_alert=True
+            )
         return
     else:
         clicked.add(data)
 
+    # Сразу отвечаем Telegram, чтобы избежать ошибок "Query is too old"
+    if callback_id:
+        await bot.answer_callback_query(callback_query_id=callback_id)
+
+    # ===== Квиз =====
     if data == "quiz":
         await send_quiz(chat_id)
     elif data.startswith("quiz_answer_"):
@@ -465,7 +491,7 @@ async def handle_callback(chat_id, data):
         await view_budget(chat_id)
 
     # ===== Назад в главное меню =====
-    elif data == "main_menu" or data == "back_to_main":
+    elif data in ["main_menu", "back_to_main"]:
         await send_main_menu(chat_id)
 
 
@@ -504,19 +530,15 @@ def telegram_webhook(request):
                         goals = state.get("goals", [])
                         if 0 <= index < len(goals):
                             if goals[index].get("completed", False):
-                                async_to_sync(bot.send_message)(
-                                    chat_id, f"❌ Мақсат '{goals[index]['name']}' Орындалып қойған! Ақша қоса алмайсыз."
-                                )
+                                async_to_sync(bot.send_message)(chat_id, f"❌ Мақсат '{goals[index]['name']}' орындалып қойған! Ақша қоса алмайсыз.")
                             else:
                                 goals[index]["saved"] += amount
                                 saved = goals[index]["saved"]
                                 total = goals[index]["amount"]
-                                message = f"💰 С3з мақсатыңызға {amount} теңге қостыңыз '{goals[index]['name']}'\nПрогресс: {saved}/{total} тг"
-
+                                message = f"💰 Сіз мақсатыңызға {amount} теңге қостыңыз '{goals[index]['name']}'\nПрогресс: {saved}/{total} тг"
                                 if saved >= total:
                                     goals[index]["completed"] = True
                                     message += f"\n🎉 Құттықтаймын! Мақсатыңызға '{goals[index]['name']}' жеттіңіз!"
-
                                 async_to_sync(bot.send_message)(chat_id, message)
                         else:
                             async_to_sync(bot.send_message)(chat_id, "❌ Мақсаттың номері қате.")
@@ -567,7 +589,7 @@ def telegram_webhook(request):
                 callback_id = data["callback_query"]["id"]
                 chat_id = data["callback_query"]["message"]["chat"]["id"]
                 callback_data = data["callback_query"]["data"]
-                async_to_sync(handle_callback)(chat_id, callback_data)
+                async_to_sync(handle_callback)(chat_id, callback_data, callback_id)
                 return JsonResponse({"ok": True})
 
     except Exception as e:
