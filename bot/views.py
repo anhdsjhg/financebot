@@ -4,25 +4,9 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from asgiref.sync import async_to_sync
 import json
 import random
-from telegram.error import BadRequest
 
 TOKEN = "8050416803:AAH-H_CWnRgJ2n5MoQYzshVIqU-jhrjeJus"
 bot = Bot(token=TOKEN)
-
-async def safe_answer_callback(callback_query_id, text=None, show_alert=False):
-    try:
-        if callback_query_id:
-            await bot.answer_callback_query(callback_query_id, text=text, show_alert=show_alert)
-    except BadRequest as e:
-        print("answer_callback_query failed:", e)
-
-def button_already_pressed(state, button_id):
-    """Возвращает True, если кнопка уже нажата"""
-    pressed = state.setdefault("pressed_buttons", set())
-    if button_id in pressed:
-        return True
-    pressed.add(button_id)
-    return False
 
 # Максимальное количество покупок за игру
 MAX_PURCHASES = 6
@@ -409,28 +393,10 @@ async def handle_myth(chat_id, data):
 
     await send_myth(chat_id)
 
+
 # Основная обработка коллбэков
-user_clicked_buttons = {}  
-
-def is_button_click_valid(state, button_id):
-    pressed = state.setdefault("pressed_buttons", set())
-    if button_id in pressed:
-        return False
-    pressed.add(button_id)
-    return True
-
-async def handle_callback(chat_id, data, callback_id=None):
+async def handle_callback(chat_id, data):
     state = user_states.setdefault(chat_id, {})
-    pressed = state.setdefault("pressed_buttons", set())
-
-    # Если уже нажимали — просто игнорируем повторное срабатывание
-    if data in pressed:
-        return
-    pressed.add(data)
-
-    # Сразу отвечаем Telegram, чтобы не было ошибок
-    if callback_id:
-        await bot.answer_callback_query(callback_query_id=callback_id)
 
     # ===== Квиз =====
     if data == "quiz":
@@ -439,77 +405,75 @@ async def handle_callback(chat_id, data, callback_id=None):
         index = state.get("quiz_index", 0)
         if index >= len(quiz_questions):
             await send_quiz(chat_id)
-            pressed.discard(data)
             return
         q = quiz_questions[index]
         selected = int(data.split("_")[-1])
         if selected == q["correct"]:
             state["quiz_score"] = state.get("quiz_score", 0) + 1
-            await bot.send_message(chat_id, "✅ Дұрыс!\n" + q["explanation"])
+            await bot.send_message(chat_id=chat_id, text="✅ Дұрыс!\n" + q["explanation"])
         else:
-            await bot.send_message(chat_id, "❌ Қате!\n" + q["explanation"])
+            await bot.send_message(chat_id=chat_id, text="❌ Қате!\n" + q["explanation"])
         state["quiz_index"] = index + 1
         await send_quiz(chat_id)
-        pressed.discard(data)  # разблокируем кнопку после обработки
 
     # ===== Советы =====
     elif data == "tips":
         await send_tip(chat_id)
-        pressed.discard(data)
 
     # ===== Мини-игра «Корзина» =====
     elif data == "game":
         await start_shop_game(chat_id)
-        pressed.discard(data)
     elif data.startswith("buy_") or data == "finish_shopping":
         await handle_shop_game(chat_id, data)
-        pressed.discard(data)
 
     # ===== Мифы и факты =====
     elif data == "myths":
         await send_myth(chat_id)
-        pressed.discard(data)
     elif data in ["myth_true", "myth_false"]:
         await handle_myth(chat_id, data)
-        pressed.discard(data)
 
     # ===== Финансовые цели =====
     elif data == "goals":
         await send_goals_menu(chat_id)
-        pressed.discard(data)
     elif data == "create_goal":
-        state["awaiting_goal_input"] = True
-        pressed.discard(data)
-        await bot.send_message(chat_id, "Мақсатты осы форматта енгізіңіз: Аты - Қаржы сомасы")
+        state["awaiting_goal_input"] = True  # ← установка флага
+        await bot.send_message(chat_id, "Мақсатты осы форматта енгізіңіз: Аты - Қаржы сомасы (мысалы: Жаңа телефон - 50000)")
     elif data == "add_to_goal":
-        state["awaiting_goal_contribution"] = True
-        pressed.discard(data)
-        await bot.send_message(chat_id, "Мақсаттың номеры мен қаржы сомасын енгізіңіз")
+        state["awaiting_goal_contribution"] = True  # ← установка флага
+        await bot.send_message(chat_id, "Мақсаттың номеры мен қаржы сомасын бос орын арқылы енгізіңіз: 1 5000")
     elif data == "view_goals":
         await view_goals(chat_id)
-        pressed.discard(data)
+    elif data.startswith("goal_progress:"):
+        try:
+            index = int(data.split(":")[1])
+            goals = state.get("goals", [])
+            if 0 <= index < len(goals):
+                goal = goals[index]
+                await bot.send_message(
+                    chat_id,
+                    f"Мақсат: {goal['name']}\nПрогресс: {goal['saved']}/{goal['amount']} теңге"
+                )
+            else:
+                await bot.send_message(chat_id, "❌ Мақсат табылмады.")
+        except Exception:
+            await bot.send_message(chat_id, "❌ Мақсатты табуда қателесті.")
+
 
     # ===== Личный бюджет =====
     elif data == "budget":
         await send_budget_menu(chat_id)
-        pressed.discard(data)
     elif data == "add_income":
-        state["awaiting_budget_income"] = True
-        pressed.discard(data)
-        await bot.send_message(chat_id, "Табысты осы форматта енгізіңіз: Сомасы Категория")
+        state["awaiting_budget_income"] = True  # ← установка флага
+        await bot.send_message(chat_id, "Табысты осы форматта енгізіңіз: Қаржы сомасы Категория (мысалы: 5000 ЗП)")
     elif data == "add_expense":
-        state["awaiting_budget_expense"] = True
-        pressed.discard(data)
-        await bot.send_message(chat_id, "Шығынды осы форматта енгізіңіз: Сомасы Категория")
+        state["awaiting_budget_expense"] = True  # ← установка флага
+        await bot.send_message(chat_id, "Шығынды осы форматта енгізіңіз: Қаржы сомасы Категория (мысалы: 1200 азық-түлік)")
     elif data == "view_budget":
         await view_budget(chat_id)
-        pressed.discard(data)
 
     # ===== Назад в главное меню =====
-    elif data in ["main_menu", "back_to_main"]:
+    elif data == "main_menu" or data == "back_to_main":
         await send_main_menu(chat_id)
-        pressed.discard(data)
-
 
 @csrf_exempt
 def telegram_webhook(request):
@@ -546,15 +510,19 @@ def telegram_webhook(request):
                         goals = state.get("goals", [])
                         if 0 <= index < len(goals):
                             if goals[index].get("completed", False):
-                                async_to_sync(bot.send_message)(chat_id, f"❌ Мақсат '{goals[index]['name']}' орындалып қойған! Ақша қоса алмайсыз.")
+                                async_to_sync(bot.send_message)(
+                                    chat_id, f"❌ Мақсат '{goals[index]['name']}' Орындалып қойған! Ақша қоса алмайсыз."
+                                )
                             else:
                                 goals[index]["saved"] += amount
                                 saved = goals[index]["saved"]
                                 total = goals[index]["amount"]
-                                message = f"💰 Сіз мақсатыңызға {amount} теңге қостыңыз '{goals[index]['name']}'\nПрогресс: {saved}/{total} тг"
+                                message = f"💰 С3з мақсатыңызға {amount} теңге қостыңыз '{goals[index]['name']}'\nПрогресс: {saved}/{total} тг"
+
                                 if saved >= total:
                                     goals[index]["completed"] = True
                                     message += f"\n🎉 Құттықтаймын! Мақсатыңызға '{goals[index]['name']}' жеттіңіз!"
+
                                 async_to_sync(bot.send_message)(chat_id, message)
                         else:
                             async_to_sync(bot.send_message)(chat_id, "❌ Мақсаттың номері қате.")
@@ -605,7 +573,7 @@ def telegram_webhook(request):
                 callback_id = data["callback_query"]["id"]
                 chat_id = data["callback_query"]["message"]["chat"]["id"]
                 callback_data = data["callback_query"]["data"]
-                async_to_sync(handle_callback)(chat_id, callback_data, callback_id)
+                async_to_sync(handle_callback)(chat_id, callback_data)
                 return JsonResponse({"ok": True})
 
     except Exception as e:
