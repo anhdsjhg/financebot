@@ -395,126 +395,78 @@ async def handle_myth(chat_id, data):
 
 
 # Основная обработка коллбэков
-processing = {}
+user_clicked_buttons = {}  
 
-async def handle_callback(callback_query):
-    chat_id = callback_query.message.chat.id
-    data = callback_query.data
+async def handle_callback(chat_id, data):
     state = user_states.setdefault(chat_id, {})
+    clicked = user_clicked_buttons.setdefault(chat_id, set())
 
-    if processing.get(chat_id):
-        await bot.answer_callback_query(callback_query.id)
+    if data in clicked:
+        await bot.answer_callback_query(callback_query_id=None, text="ℹ️ Бұл батырма бір рет басылды!", show_alert=True)
         return
+    else:
+        clicked.add(data)
 
-    processing[chat_id] = True
-
-    await bot.answer_callback_query(callback_query.id)
-
-    try:
-        # ===== Квиз =====
-        if data == "quiz":
+    if data == "quiz":
+        await send_quiz(chat_id)
+    elif data.startswith("quiz_answer_"):
+        index = state.get("quiz_index", 0)
+        if index >= len(quiz_questions):
             await send_quiz(chat_id)
+            return
+        q = quiz_questions[index]
+        selected = int(data.split("_")[-1])
+        if selected == q["correct"]:
+            state["quiz_score"] = state.get("quiz_score", 0) + 1
+            await bot.send_message(chat_id=chat_id, text="✅ Дұрыс!\n" + q["explanation"])
+        else:
+            await bot.send_message(chat_id=chat_id, text="❌ Қате!\n" + q["explanation"])
+        state["quiz_index"] = index + 1
+        await send_quiz(chat_id)
 
-        elif data.startswith("quiz_answer_"):
-            index = state.get("quiz_index", 0)
+    # ===== Советы =====
+    elif data == "tips":
+        await send_tip(chat_id)
 
-            if index >= len(quiz_questions):
-                await send_quiz(chat_id)
-                return
+    # ===== Мини-игра «Корзина» =====
+    elif data == "game":
+        await start_shop_game(chat_id)
+    elif data.startswith("buy_") or data == "finish_shopping":
+        await handle_shop_game(chat_id, data)
 
-            q = quiz_questions[index]
-            selected = int(data.split("_")[-1])
+    # ===== Мифы и факты =====
+    elif data == "myths":
+        await send_myth(chat_id)
+    elif data in ["myth_true", "myth_false"]:
+        await handle_myth(chat_id, data)
 
-            if selected == q["correct"]:
-                state["quiz_score"] = state.get("quiz_score", 0) + 1
-                await bot.send_message(chat_id, f"✅ Дұрыс!\n{q['explanation']}")
-            else:
-                await bot.send_message(chat_id, f"❌ Қате!\n{q['explanation']}")
+    # ===== Финансовые цели =====
+    elif data == "goals":
+        await send_goals_menu(chat_id)
+    elif data == "create_goal":
+        state["awaiting_goal_input"] = True
+        await bot.send_message(chat_id, "Мақсатты осы форматта енгізіңіз: Аты - Қаржы сомасы (мысалы: Жаңа телефон - 50000)")
+    elif data == "add_to_goal":
+        state["awaiting_goal_contribution"] = True
+        await bot.send_message(chat_id, "Мақсаттың номеры мен қаржы сомасын бос орын арқылы енгізіңіз: 1 5000")
+    elif data == "view_goals":
+        await view_goals(chat_id)
 
-            state["quiz_index"] = index + 1
-            await send_quiz(chat_id)
+    # ===== Личный бюджет =====
+    elif data == "budget":
+        await send_budget_menu(chat_id)
+    elif data == "add_income":
+        state["awaiting_budget_income"] = True
+        await bot.send_message(chat_id, "Табысты осы форматта енгізіңіз: Қаржы сомасы Категория (мысалы: 5000 ЗП)")
+    elif data == "add_expense":
+        state["awaiting_budget_expense"] = True
+        await bot.send_message(chat_id, "Шығынды осы форматта енгізіңіз: Қаржы сомасы Категория (мысалы: 1200 азық-түлік)")
+    elif data == "view_budget":
+        await view_budget(chat_id)
 
-        # ===== Советы =====
-        elif data == "tips":
-            await send_tip(chat_id)
-
-        # ===== Мини-игра «Корзина» =====
-        elif data == "game":
-            await start_shop_game(chat_id)
-        elif data.startswith("buy_") or data == "finish_shopping":
-            await handle_shop_game(chat_id, data)
-
-        # ===== Мифы и факты =====
-        elif data == "myths":
-            await send_myth(chat_id)
-        elif data in ["myth_true", "myth_false"]:
-            await handle_myth(chat_id, data)
-
-        # ===== Финансовые цели =====
-        elif data == "goals":
-            await send_goals_menu(chat_id)
-
-        elif data == "create_goal":
-            state["awaiting_goal_input"] = True
-            await bot.send_message(
-                chat_id,
-                "Мақсатты осы форматта енгізіңіз: Аты - Сома (мысалы: Жаңа телефон - 50000)"
-            )
-
-        elif data == "add_to_goal":
-            state["awaiting_goal_contribution"] = True
-            await bot.send_message(
-                chat_id,
-                "Мақсаттың номеры мен сомасын енгізіңіз: 1 5000"
-            )
-
-        elif data == "view_goals":
-            await view_goals(chat_id)
-
-        elif data.startswith("goal_progress:"):
-            try:
-                index = int(data.split(":")[1])
-                goals = state.get("goals", [])
-
-                if 0 <= index < len(goals):
-                    goal = goals[index]
-                    await bot.send_message(
-                        chat_id,
-                        f"Мақсат: {goal['name']}\nПрогресс: {goal['saved']}/{goal['amount']} теңге"
-                    )
-                else:
-                    await bot.send_message(chat_id, "❌ Мақсат табылмады.")
-
-            except Exception:
-                await bot.send_message(chat_id, "❌ Мақсатты табуда қате.")
-
-        # ===== Бюджет =====
-        elif data == "budget":
-            await send_budget_menu(chat_id)
-
-        elif data == "add_income":
-            state["awaiting_budget_income"] = True
-            await bot.send_message(
-                chat_id,
-                "Табыс форматы: Сома Категория (мысалы: 5000 ЗП)"
-            )
-
-        elif data == "add_expense":
-            state["awaiting_budget_expense"] = True
-            await bot.send_message(
-                chat_id,
-                "Шығын форматы: Сома Категория (мысалы: 1200 азық-түлік)"
-            )
-
-        elif data == "view_budget":
-            await view_budget(chat_id)
-
-        # ===== Главное меню =====
-        elif data == "main_menu" or data == "back_to_main":
-            await send_main_menu(chat_id)
-
-    finally:
-        processing[chat_id] = False
+    # ===== Назад в главное меню =====
+    elif data == "main_menu" or data == "back_to_main":
+        await send_main_menu(chat_id)
 
 
 @csrf_exempt
