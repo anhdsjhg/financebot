@@ -395,25 +395,37 @@ async def handle_myth(chat_id, data):
 
 
 # Основная обработка коллбэков
-async def handle_callback(chat_id, data):
+async def handle_callback(chat_id, data, callback_id=None):
     state = user_states.setdefault(chat_id, {})
+    current_answered = state.setdefault("current_answered", set())
 
     # ===== Квиз =====
     if data == "quiz":
         await send_quiz(chat_id)
+
     elif data.startswith("quiz_answer_"):
+        # Игнорируем повторные нажатия для текущего вопроса
+        if data in current_answered:
+            return
+        current_answered.add(data)
+
         index = state.get("quiz_index", 0)
         if index >= len(quiz_questions):
             await send_quiz(chat_id)
+            current_answered.clear()
             return
+
         q = quiz_questions[index]
         selected = int(data.split("_")[-1])
+
         if selected == q["correct"]:
             state["quiz_score"] = state.get("quiz_score", 0) + 1
-            await bot.send_message(chat_id=chat_id, text="✅ Дұрыс!\n" + q["explanation"])
+            await bot.send_message(chat_id, text="✅ Дұрыс!\n" + q["explanation"])
         else:
-            await bot.send_message(chat_id=chat_id, text="❌ Қате!\n" + q["explanation"])
+            await bot.send_message(chat_id, text="❌ Қате!\n" + q["explanation"])
+
         state["quiz_index"] = index + 1
+        current_answered.clear()  # Разрешаем кнопки следующего вопроса
         await send_quiz(chat_id)
 
     # ===== Советы =====
@@ -430,50 +442,61 @@ async def handle_callback(chat_id, data):
     elif data == "myths":
         await send_myth(chat_id)
     elif data in ["myth_true", "myth_false"]:
-        await handle_myth(chat_id, data)
+        # Игнорируем повторные клики для текущего мифа
+        if data in current_answered:
+            return
+        current_answered.add(data)
+
+        index = state.get("myth_index", 0)
+        if index >= len(myths_facts):
+            await send_myth(chat_id)
+            current_answered.clear()
+            return
+
+        myth = myths_facts[index]
+        user_choice = data == "myth_true"
+
+        if user_choice == myth["is_true"]:
+            await bot.send_message(chat_id, text="✅ Дұрыс!")
+        else:
+            await bot.send_message(chat_id, text="❌ Қате!")
+
+        await bot.send_message(chat_id, text="💡 " + myth["explanation"])
+        state["myth_index"] = index + 1
+        current_answered.clear()
+        await send_myth(chat_id)
 
     # ===== Финансовые цели =====
     elif data == "goals":
         await send_goals_menu(chat_id)
     elif data == "create_goal":
-        state["awaiting_goal_input"] = True  # ← установка флага
+        state["awaiting_goal_input"] = True
         await bot.send_message(chat_id, "Мақсатты осы форматта енгізіңіз: Аты - Қаржы сомасы (мысалы: Жаңа телефон - 50000)")
     elif data == "add_to_goal":
-        state["awaiting_goal_contribution"] = True  # ← установка флага
+        state["awaiting_goal_contribution"] = True
         await bot.send_message(chat_id, "Мақсаттың номеры мен қаржы сомасын бос орын арқылы енгізіңіз: 1 5000")
     elif data == "view_goals":
         await view_goals(chat_id)
-    elif data.startswith("goal_progress:"):
-        try:
-            index = int(data.split(":")[1])
-            goals = state.get("goals", [])
-            if 0 <= index < len(goals):
-                goal = goals[index]
-                await bot.send_message(
-                    chat_id,
-                    f"Мақсат: {goal['name']}\nПрогресс: {goal['saved']}/{goal['amount']} теңге"
-                )
-            else:
-                await bot.send_message(chat_id, "❌ Мақсат табылмады.")
-        except Exception:
-            await bot.send_message(chat_id, "❌ Мақсатты табуда қателесті.")
-
 
     # ===== Личный бюджет =====
     elif data == "budget":
         await send_budget_menu(chat_id)
     elif data == "add_income":
-        state["awaiting_budget_income"] = True  # ← установка флага
+        state["awaiting_budget_income"] = True
         await bot.send_message(chat_id, "Табысты осы форматта енгізіңіз: Қаржы сомасы Категория (мысалы: 5000 ЗП)")
     elif data == "add_expense":
-        state["awaiting_budget_expense"] = True  # ← установка флага
+        state["awaiting_budget_expense"] = True
         await bot.send_message(chat_id, "Шығынды осы форматта енгізіңіз: Қаржы сомасы Категория (мысалы: 1200 азық-түлік)")
     elif data == "view_budget":
         await view_budget(chat_id)
 
     # ===== Назад в главное меню =====
-    elif data == "main_menu" or data == "back_to_main":
+    elif data in ["main_menu", "back_to_main"]:
         await send_main_menu(chat_id)
+
+    # Сразу отвечаем Telegram, чтобы избежать ошибок "Query is too old"
+    if callback_id:
+        await bot.answer_callback_query(callback_query_id=callback_id)
 
 @csrf_exempt
 def telegram_webhook(request):
