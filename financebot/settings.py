@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-d^8%&d1_*lb847jzq6g7kt6@bcpuwru-2in2e^!g96jxot8ysz
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '007ac46151d4.ngrok-free.app', '*']
+ALLOWED_HOSTS = ['financebot-e873.onrender.com', '127.0.0.1', 'localhost']
 
 
 # Application definition
