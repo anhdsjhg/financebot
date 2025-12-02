@@ -412,23 +412,23 @@ async def handle_myth(chat_id, data):
 # Основная обработка коллбэков
 user_clicked_buttons = {}  
 
+def is_button_click_valid(state, button_id):
+    pressed = state.setdefault("pressed_buttons", set())
+    if button_id in pressed:
+        return False
+    pressed.add(button_id)
+    return True
+
 async def handle_callback(chat_id, data, callback_id=None):
     state = user_states.setdefault(chat_id, {})
-    clicked = user_clicked_buttons.setdefault(chat_id, set())
+    pressed = state.setdefault("pressed_buttons", set())
 
-    # Защита от повторного нажатия
-    if data in clicked:
-        if callback_id:
-            await bot.answer_callback_query(
-                callback_query_id=callback_id, 
-                text="ℹ️ Бұл батырма бір рет басылды!", 
-                show_alert=True
-            )
+    # Если уже нажимали — просто игнорируем повторное срабатывание
+    if data in pressed:
         return
-    else:
-        clicked.add(data)
+    pressed.add(data)
 
-    # Сразу отвечаем Telegram, чтобы избежать ошибок "Query is too old"
+    # Сразу отвечаем Telegram, чтобы не было ошибок
     if callback_id:
         await bot.answer_callback_query(callback_query_id=callback_id)
 
@@ -439,60 +439,76 @@ async def handle_callback(chat_id, data, callback_id=None):
         index = state.get("quiz_index", 0)
         if index >= len(quiz_questions):
             await send_quiz(chat_id)
+            pressed.discard(data)
             return
         q = quiz_questions[index]
         selected = int(data.split("_")[-1])
         if selected == q["correct"]:
             state["quiz_score"] = state.get("quiz_score", 0) + 1
-            await bot.send_message(chat_id=chat_id, text="✅ Дұрыс!\n" + q["explanation"])
+            await bot.send_message(chat_id, "✅ Дұрыс!\n" + q["explanation"])
         else:
-            await bot.send_message(chat_id=chat_id, text="❌ Қате!\n" + q["explanation"])
+            await bot.send_message(chat_id, "❌ Қате!\n" + q["explanation"])
         state["quiz_index"] = index + 1
         await send_quiz(chat_id)
+        pressed.discard(data)  # разблокируем кнопку после обработки
 
     # ===== Советы =====
     elif data == "tips":
         await send_tip(chat_id)
+        pressed.discard(data)
 
     # ===== Мини-игра «Корзина» =====
     elif data == "game":
         await start_shop_game(chat_id)
+        pressed.discard(data)
     elif data.startswith("buy_") or data == "finish_shopping":
         await handle_shop_game(chat_id, data)
+        pressed.discard(data)
 
     # ===== Мифы и факты =====
     elif data == "myths":
         await send_myth(chat_id)
+        pressed.discard(data)
     elif data in ["myth_true", "myth_false"]:
         await handle_myth(chat_id, data)
+        pressed.discard(data)
 
     # ===== Финансовые цели =====
     elif data == "goals":
         await send_goals_menu(chat_id)
+        pressed.discard(data)
     elif data == "create_goal":
         state["awaiting_goal_input"] = True
-        await bot.send_message(chat_id, "Мақсатты осы форматта енгізіңіз: Аты - Қаржы сомасы (мысалы: Жаңа телефон - 50000)")
+        pressed.discard(data)
+        await bot.send_message(chat_id, "Мақсатты осы форматта енгізіңіз: Аты - Қаржы сомасы")
     elif data == "add_to_goal":
         state["awaiting_goal_contribution"] = True
-        await bot.send_message(chat_id, "Мақсаттың номеры мен қаржы сомасын бос орын арқылы енгізіңіз: 1 5000")
+        pressed.discard(data)
+        await bot.send_message(chat_id, "Мақсаттың номеры мен қаржы сомасын енгізіңіз")
     elif data == "view_goals":
         await view_goals(chat_id)
+        pressed.discard(data)
 
     # ===== Личный бюджет =====
     elif data == "budget":
         await send_budget_menu(chat_id)
+        pressed.discard(data)
     elif data == "add_income":
         state["awaiting_budget_income"] = True
-        await bot.send_message(chat_id, "Табысты осы форматта енгізіңіз: Қаржы сомасы Категория (мысалы: 5000 ЗП)")
+        pressed.discard(data)
+        await bot.send_message(chat_id, "Табысты осы форматта енгізіңіз: Сомасы Категория")
     elif data == "add_expense":
         state["awaiting_budget_expense"] = True
-        await bot.send_message(chat_id, "Шығынды осы форматта енгізіңіз: Қаржы сомасы Категория (мысалы: 1200 азық-түлік)")
+        pressed.discard(data)
+        await bot.send_message(chat_id, "Шығынды осы форматта енгізіңіз: Сомасы Категория")
     elif data == "view_budget":
         await view_budget(chat_id)
+        pressed.discard(data)
 
     # ===== Назад в главное меню =====
     elif data in ["main_menu", "back_to_main"]:
         await send_main_menu(chat_id)
+        pressed.discard(data)
 
 
 @csrf_exempt
